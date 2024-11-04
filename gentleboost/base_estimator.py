@@ -57,7 +57,8 @@ class DecisionStump(BaseEstimator):
         min_error = float('inf')
         
         # Use fewer percentiles for faster training
-        n_thresholds = min(10, X.shape[0] // 100)
+        n_thresholds = min(10, X.shape[0] // 100)  # This might be too small for small datasets
+        n_thresholds = max(n_thresholds, 3)  # Ensure at least 3 thresholds
         percentiles = cp.linspace(0, 100, n_thresholds)
         
         for feature in range(n_features):
@@ -74,28 +75,30 @@ class DecisionStump(BaseEstimator):
             valid_thresholds = (cp.sum(left_mask, axis=0) > 0) & (cp.sum(right_mask, axis=0) > 0)
             if not cp.any(valid_thresholds):
                 continue
+            
             left_mask = left_mask[:, valid_thresholds]
             right_mask = right_mask[:, valid_thresholds]
             thresholds_valid = thresholds[valid_thresholds]
             
+            # Add small epsilon to denominators to prevent division by zero
+            eps = 1e-10
+            
             # Vectorized weighted calculations
             w_left = sample_weight[:, cp.newaxis] * left_mask
             w_right = sample_weight[:, cp.newaxis] * right_mask
-            sum_w_left = cp.sum(w_left, axis=0)
-            sum_w_right = cp.sum(w_right, axis=0)
+            sum_w_left = cp.sum(w_left, axis=0) + eps
+            sum_w_right = cp.sum(w_right, axis=0) + eps
             
-            y_left = y[:, cp.newaxis] * left_mask
-            y_right = y[:, cp.newaxis] * right_mask
-            
-            sum_wy_left = cp.sum(w_left * y_left, axis=0)
-            sum_wy_right = cp.sum(w_right * y_right, axis=0)
+            y_expanded = y[:, cp.newaxis]
+            sum_wy_left = cp.sum(w_left * y_expanded, axis=0)
+            sum_wy_right = cp.sum(w_right * y_expanded, axis=0)
             
             left_value = sum_wy_left / sum_w_left
             right_value = sum_wy_right / sum_w_right
             
             # Compute errors vectorized
-            error_left = cp.sum(w_left * (y_left - left_value[cp.newaxis, :]) ** 2, axis=0)
-            error_right = cp.sum(w_right * (y_right - right_value[cp.newaxis, :]) ** 2, axis=0)
+            error_left = cp.sum(w_left * (y_expanded - left_value[cp.newaxis, :]) ** 2, axis=0)
+            error_right = cp.sum(w_right * (y_expanded - right_value[cp.newaxis, :]) ** 2, axis=0)
             total_error = error_left + error_right
             
             # Update best parameters
@@ -104,8 +107,8 @@ class DecisionStump(BaseEstimator):
                 min_error = total_error[min_error_idx]
                 self.feature_idx = feature
                 self.threshold = thresholds_valid[min_error_idx]
-                self.left_value = left_value[min_error_idx]
-                self.right_value = right_value[min_error_idx]
+                self.left_value = float(left_value[min_error_idx])
+                self.right_value = float(right_value[min_error_idx])
         
         return self
     
